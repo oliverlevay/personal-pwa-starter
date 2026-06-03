@@ -3,6 +3,8 @@
 // stream from /api/chat (ASCII RS 0x1e): unframed = answer, THINK: = thoughts, TOOLS: =
 // chips, anything else = transient status. Distilled from oliver-och-klara-i-japan.
 import { useRef, useState } from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api } from '../lib/api.ts';
 import { Button, Textarea } from './ui.tsx';
 
@@ -127,7 +129,11 @@ export function ChatWidget() {
             )}
             {(m.content || (m.role === 'assistant' && busy && !m.thoughts)) && (
               <div className={`bubble bubble-${m.role}${m.error ? ' bubble-error' : ''}`}>
-                {m.content || '…'}
+                {m.role === 'assistant' && !m.error && m.content ? (
+                  <Markdown remarkPlugins={[remarkGfm]}>{m.content}</Markdown>
+                ) : (
+                  m.content || '…'
+                )}
               </div>
             )}
             {m.tools && m.tools.length > 0 && (

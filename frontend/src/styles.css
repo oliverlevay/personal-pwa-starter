@@ -249,12 +249,50 @@ body {
 .chat-input {
   display: flex;
   gap: 8px;
-  align-items: flex-end;
+  align-items: stretch; /* textarea + send button share the same height -> aligned edges */
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
 .chat-input .input {
   flex: 1;
+}
+.chat-input .btn {
+  align-self: stretch;
+}
+
+/* Markdown inside assistant bubbles */
+.bubble > :first-child {
+  margin-top: 0;
+}
+.bubble > :last-child {
+  margin-bottom: 0;
+}
+.bubble p {
+  margin: 0.5em 0;
+}
+.bubble ul,
+.bubble ol {
+  margin: 0.5em 0;
+  padding-left: 1.2em;
+}
+.bubble code {
+  background: var(--surface-2);
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-size: 0.9em;
+}
+.bubble pre {
+  background: var(--surface-2);
+  padding: 10px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.bubble pre code {
+  background: none;
+  padding: 0;
+}
+.bubble a {
+  color: var(--accent);
 }
 
 /* Global fetch spinner */
