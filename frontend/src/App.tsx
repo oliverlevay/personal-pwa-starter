@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './lib/api.ts';
-import { useQuery, useIsFetching, refetch, clearCache } from './lib/query.ts';
+import { useQuery, useIsFetching, mutate, clearCache } from './lib/query.ts';
 import { pushState, enablePush, disablePush, sendTestPush, type PushState } from './lib/push.ts';
 import { Button, Card, Input } from './components/ui.tsx';
 import { ChatWidget } from './components/ChatWidget.tsx';
@@ -60,13 +60,20 @@ function NotesView() {
   async function add(): Promise<void> {
     const t = title.trim();
     if (!t) return;
-    await api.create('notes', { title: t });
     setTitle('');
-    refetch('notes');
+    // Optimistic: show the note immediately (temp id), reconcile with the server's row after.
+    await mutate<Note[]>(
+      'notes',
+      (prev) => [{ id: `tmp-${Date.now()}`, title: t }, ...(prev ?? [])],
+      () => api.create('notes', { title: t }),
+    ).catch(() => {}); // rollback already handled inside mutate
   }
   async function del(id: string): Promise<void> {
-    await api.remove('notes', id);
-    refetch('notes');
+    await mutate<Note[]>(
+      'notes',
+      (prev) => (prev ?? []).filter((n) => n.id !== id),
+      () => api.remove('notes', id),
+    ).catch(() => {});
   }
 
   return (

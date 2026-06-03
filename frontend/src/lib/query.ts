@@ -79,6 +79,25 @@ export function refetchAll(): Promise<unknown[]> {
   return Promise.all([...cache.keys()].map((k) => refetch(k).catch(() => {})));
 }
 
+// Optimistic mutation: apply `next` to the cached value immediately (instant UI), run the
+// server op, then revalidate from the server (to pick up real ids/timestamps). Rolls back
+// to the previous value if the op throws. Default new CRUD UIs to this.
+export async function mutate<T = unknown>(
+  key: string,
+  next: (prev: T | undefined) => T,
+  serverOp: () => Promise<unknown>,
+): Promise<void> {
+  const prev = read(key) as T | undefined;
+  write(key, next(prev));
+  try {
+    await serverOp();
+    refetch(key); // reconcile with server truth; don't block the already-updated UI
+  } catch (e) {
+    write(key, prev); // roll back
+    throw e;
+  }
+}
+
 // Returns cached data immediately (undefined if never loaded) and triggers a background
 // revalidation on mount.
 export function useQuery<T = unknown>(key: string): T | undefined {
