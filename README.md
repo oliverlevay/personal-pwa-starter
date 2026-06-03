@@ -63,9 +63,11 @@ layer; nothing speculative.
 ## Build a new app from it
 
 1. Clone/copy this directory; rename in `package.json`, `manifest.webmanifest`, `index.html`.
-2. In `backend/server.ts`: add your tables to `store.migrate([...])`, list them in `resources`, and replace the demo chat `system`/`tools` and `inbox` handler with your domain logic.
-3. Add views under `frontend/src/`. Keep using `components/ui` primitives.
-4. `node scripts/gen-icons.mjs` (or drop in your own icons).
+2. **Re-skin:** edit `frontend/src/theme.css` — it's the single source of color (CSS, the
+   browser chrome, the PWA manifest, and the icons all derive from it; no color literal
+   lives anywhere else). Then `node scripts/gen-icons.mjs` to regenerate matching icons.
+3. In `backend/lib/app.ts`: add your tables to `store.migrate([...])`, list them in `resources`, and replace the demo chat `system`/`tools` and `inbox` handler with your domain logic.
+4. Add views under `frontend/src/`. Keep using `components/ui` primitives.
 
 See [CONTRACT.md](./CONTRACT.md) for the HTTP surface the frontend depends on.
 

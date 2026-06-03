@@ -19,6 +19,7 @@
   --accent: #6d8bff;
   --accent-2: #9b6dff;
   --danger: #ff6d6d;
+  --on-accent: #ffffff; /* text/icons on top of accent gradients */
 
   /* Shape + type */
   --radius: 14px;

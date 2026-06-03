@@ -126,7 +126,7 @@ body {
 }
 .btn-primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff;
+  color: var(--on-accent);
 }
 .btn-ghost {
   background: var(--surface-2);
@@ -255,7 +255,7 @@ body {
 }
 .bubble-user {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  color: #fff;
+  color: var(--on-accent);
 }
 .bubble-assistant {
   background: var(--surface);
