@@ -3,12 +3,13 @@
 // prompt + tools (e.g. the finance app exposes SQL-over-transactions tools). Distilled
 // from oliver-och-klara-i-japan's chat.ts, minus the trip-specific bits.
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { Buffer } from 'node:buffer';
 import { config } from './config.ts';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const MAX_HISTORY = 20;
 const MAX_MSG_LEN = 8000;
-const MAX_BODY = 8 * 1024 * 1024;
+const MAX_BODY = 20 * 1024 * 1024; // room for an attached image/PDF as base64
 const MAX_TOOL_ROUNDS = 8;
 
 // Status lines are framed by ASCII RS (0x1e) so the client can show a transient
@@ -28,6 +29,14 @@ export interface ChatConfig {
   tools?: ChatTool[];
   runTool?: (name: string, input: Record<string, unknown>) => Promise<unknown>;
   model?: string;
+  webSearch?: boolean; // enable Anthropic's hosted web_search server tool
+}
+
+// An attached file in a chat turn: a data URL (or raw base64) plus its mime/name.
+export interface ChatFile {
+  name?: string;
+  mime?: string;
+  dataBase64?: string;
 }
 
 export interface SystemBlock {
@@ -66,7 +75,22 @@ function sanitize(input: unknown): ChatMessage[] {
   return out.slice(-MAX_HISTORY);
 }
 
-function readJson(req: IncomingMessage): Promise<{ messages?: unknown }> {
+// Build Anthropic content blocks for an attached file (image/PDF inline, else decoded text).
+function fileBlocks(file: ChatFile): ContentBlock[] {
+  const data = String(file.dataBase64 || '').split(',').pop() ?? '';
+  const mime = file.mime || '';
+  const name = file.name || 'file';
+  if (mime === 'application/pdf' || /\.pdf$/i.test(name)) {
+    return [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data }, title: name }];
+  }
+  if (mime.startsWith('image/')) {
+    return [{ type: 'image', source: { type: 'base64', media_type: mime, data } }];
+  }
+  const text = Buffer.from(data, 'base64').toString('utf8').slice(0, 16000);
+  return [{ type: 'text', text: `Contents of attached file "${name}":\n\n${text}` }];
+}
+
+function readJson(req: IncomingMessage): Promise<{ messages?: unknown; file?: ChatFile }> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (c) => {
@@ -147,6 +171,10 @@ async function streamRound(
       else if (cb.type === 'tool_use') {
         blocks[ev.index] = { type: 'tool_use', id: cb.id, name: cb.name, json: '' };
         writeStatus(res, `Running ${cb.name}…`);
+      } else if (cb.type === 'server_tool_use') {
+        // Hosted tools (e.g. web_search) run server-side; the query streams like tool_use.
+        blocks[ev.index] = { type: 'server_tool_use', id: cb.id, name: cb.name, json: '' };
+        writeStatus(res, cb.name === 'web_search' ? 'Searching the web…' : `Running ${cb.name}…`);
       } else blocks[ev.index] = { type: 'passthrough', raw: cb };
     } else if (ev.type === 'content_block_delta') {
       const b = blocks[ev.index];
@@ -164,11 +192,14 @@ async function streamRound(
       }
     } else if (ev.type === 'content_block_stop') {
       const b = blocks[ev.index];
-      if (b && b.type === 'tool_use') {
+      if (b && (b.type === 'tool_use' || b.type === 'server_tool_use')) {
         try {
           b.input = b.json ? JSON.parse(b.json) : {};
         } catch {
           b.input = {};
+        }
+        if (b.type === 'server_tool_use' && b.name === 'web_search') {
+          writeStatus(res, b.input.query ? `Searching: ${b.input.query}` : 'Searching the web…');
         }
       }
     } else if (ev.type === 'message_delta') {
@@ -212,6 +243,7 @@ async function streamRound(
       if (b.type === 'text') return { type: 'text', text: b.text };
       if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking, signature: b.signature };
       if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input || {} };
+      if (b.type === 'server_tool_use') return { type: 'server_tool_use', id: b.id, name: b.name, input: b.input || {} };
       return b.raw;
     })
     // Drop empty text and unsigned thinking blocks (the API rejects both on the next turn).
@@ -243,9 +275,24 @@ export function createChatHandler(cfg: ChatConfig) {
         return sendErr(res, msg === 'too large' ? 413 : 400, msg === 'too large' ? 'Too large.' : 'Bad request.');
       }
       const messages = sanitize(body.messages);
-      if (!messages.length) return sendErr(res, 400, 'No messages to answer.');
+      const file = body.file && body.file.dataBase64 ? body.file : null;
+      if (!messages.length && !file) return sendErr(res, 400, 'No messages to answer.');
 
       const convo: ConvoMessage[] = messages.map((m) => ({ role: m.role, content: m.content }));
+      // Attach the file to the last user turn (or a new one) as content blocks.
+      if (file) {
+        const blocks = fileBlocks(file);
+        const li = convo.length - 1;
+        if (li >= 0 && convo[li].role === 'user') {
+          const typed = convo[li].content;
+          convo[li] = {
+            role: 'user',
+            content: typeof typed === 'string' && typed ? [{ type: 'text', text: typed }, ...blocks] : blocks,
+          };
+        } else {
+          convo.push({ role: 'user', content: blocks });
+        }
+      }
       const system = cfg.system(user);
 
       const ac = new AbortController();
@@ -257,6 +304,11 @@ export function createChatHandler(cfg: ChatConfig) {
         }
       });
 
+      const tools = [
+        ...(cfg.tools || []),
+        // Anthropic's hosted web search (runs server-side; results stream back as citations).
+        ...(cfg.webSearch ? [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }] : []),
+      ];
       const reqPayload: Record<string, unknown> = {
         model: cfg.model || config.anthropicModel,
         max_tokens: 8000, // room for thinking + answer + tool_use
@@ -265,7 +317,7 @@ export function createChatHandler(cfg: ChatConfig) {
         // collapsible "thoughts" box. Mirrors oliver-och-klara-i-japan (Sonnet 4.6).
         thinking: { type: 'adaptive' },
         output_config: { effort: 'medium' },
-        ...(cfg.tools && cfg.tools.length ? { tools: cfg.tools } : {}),
+        ...(tools.length ? { tools } : {}),
       };
 
       res.writeHead(200, {
@@ -283,6 +335,7 @@ export function createChatHandler(cfg: ChatConfig) {
           break;
         }
         convo.push({ role: 'assistant', content: result.content });
+        if (result.stopReason === 'pause_turn') continue; // server tool (web_search) paused; resume
         if (result.stopReason !== 'tool_use' || !result.toolUses.length) break;
         if (!cfg.runTool) break;
 

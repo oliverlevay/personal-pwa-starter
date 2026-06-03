@@ -3,6 +3,12 @@ export interface CodedError extends Error {
   code?: number;
 }
 
+export interface ChatFile {
+  name?: string;
+  mime?: string;
+  dataBase64?: string; // data URL or raw base64
+}
+
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api' + path, {
     method,
@@ -42,11 +48,11 @@ export const api = {
   testPush: () => req<{ sent: number }>('POST', '/push/test'),
 
   // Chat — returns the raw streaming Response so the caller can read text deltas.
-  chatStream: (messages: unknown, signal?: AbortSignal) =>
+  chatStream: (messages: unknown, file?: ChatFile | null, signal?: AbortSignal) =>
     fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify({ messages, ...(file ? { file } : {}) }),
       credentials: 'same-origin',
       signal,
     }),

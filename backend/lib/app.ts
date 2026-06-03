@@ -41,9 +41,11 @@ export function createApp(dataDir: string): BuiltApp {
   // finance app exposes SQL-over-transactions tools here.
   const chat = createChatHandler({
     system: () =>
-      'You are a helpful assistant inside a personal PWA. Answer concisely. ' +
+      'You are a helpful assistant inside a personal PWA. Answer concisely, in markdown. ' +
+      'You can search the web (cite sources as markdown links) and read attached images/PDFs. ' +
       'You can send the user a push notification with the send_notification tool — use it ' +
       'when they ask to be reminded or notified of something.',
+    webSearch: true,
     tools: [
       {
         name: 'send_notification',
