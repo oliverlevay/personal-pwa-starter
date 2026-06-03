@@ -1,19 +1,6 @@
-/* Mobile-first design system. All colors are defined here once and referenced via vars
-   (no hardcoded colors in components — the bokur2 rule). */
-:root {
-  --bg: #0f1115;
-  --surface: #181b22;
-  --surface-2: #20242d;
-  --border: #2b3039;
-  --text: #e7e9ee;
-  --muted: #99a0ad;
-  --accent: #6d8bff;
-  --accent-2: #9b6dff;
-  --danger: #ff6d6d;
-  --radius: 14px;
-  --tabbar-h: 60px;
-  --safe-b: env(safe-area-inset-bottom, 0px);
-}
+/* Structural styles. Colors/radius/font come from theme.css (edit that per app).
+   No hardcoded colors here — always reference the theme vars. */
+@import './theme.css';
 
 * {
   box-sizing: border-box;
@@ -27,12 +14,11 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.5 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+  font: 16px/1.5 var(--font);
   -webkit-font-smoothing: antialiased;
 }
 
-.center,
-.muted.center {
+.center {
   display: grid;
   place-items: center;
   height: 100%;
@@ -182,28 +168,77 @@ body {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   padding-bottom: 12px;
 }
-.bubble {
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   max-width: 85%;
+}
+.turn-user {
+  align-self: flex-end;
+  align-items: flex-end;
+}
+.turn-assistant {
+  align-self: flex-start;
+  align-items: flex-start;
+}
+.bubble {
   padding: 10px 14px;
   border-radius: 16px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 .bubble-user {
-  align-self: flex-end;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: #fff;
 }
 .bubble-assistant {
-  align-self: flex-start;
   background: var(--surface);
   border: 1px solid var(--border);
 }
 .bubble-error {
   border-color: var(--danger);
+}
+.thoughts {
+  font-size: 0.85rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px 10px;
+}
+.thoughts summary {
+  cursor: pointer;
+  user-select: none;
+}
+.thoughts-body {
+  white-space: pre-wrap;
+  margin-top: 6px;
+  opacity: 0.85;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chip {
+  font-size: 0.75rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+}
+.chip-fail {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.chat-done {
+  font-size: 0.75rem;
+  color: var(--muted);
 }
 .chat-status {
   align-self: flex-start;

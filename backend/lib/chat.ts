@@ -96,6 +96,12 @@ function writeStatus(res: ServerResponse, text: string): void {
   if (text) res.write(`${RS}${text}${RS}`);
 }
 
+// Thinking chunks are framed as "THINK:<chunk>" so the client can show them in a
+// collapsible box, separate from the answer (unframed) and status (plain frames).
+function writeThink(res: ServerResponse, text: string): void {
+  if (text) res.write(`${RS}THINK:${text}${RS}`);
+}
+
 // One streaming Messages call. Writes text deltas straight to the client, returns the
 // model's full content blocks (text + tool_use) and stop_reason for the tool loop.
 async function streamRound(
@@ -135,6 +141,9 @@ async function streamRound(
     if (ev.type === 'content_block_start') {
       const cb = ev.content_block || {};
       if (cb.type === 'text') blocks[ev.index] = { type: 'text', text: '' };
+      // Thinking is streamed to a collapsible "thoughts" box; the block (with signature)
+      // must also be preserved and sent back or a following tool_use turn is invalid.
+      else if (cb.type === 'thinking') blocks[ev.index] = { type: 'thinking', thinking: '', signature: '' };
       else if (cb.type === 'tool_use') {
         blocks[ev.index] = { type: 'tool_use', id: cb.id, name: cb.name, json: '' };
         writeStatus(res, `Running ${cb.name}…`);
@@ -145,6 +154,11 @@ async function streamRound(
       if (ev.delta.type === 'text_delta') {
         b.text += ev.delta.text;
         res.write(ev.delta.text);
+      } else if (ev.delta.type === 'thinking_delta') {
+        b.thinking += ev.delta.thinking;
+        writeThink(res, ev.delta.thinking);
+      } else if (ev.delta.type === 'signature_delta') {
+        b.signature += ev.delta.signature;
       } else if (ev.delta.type === 'input_json_delta') {
         b.json += ev.delta.partial_json;
       }
@@ -196,10 +210,16 @@ async function streamRound(
     .filter(Boolean)
     .map((b): ContentBlock => {
       if (b.type === 'text') return { type: 'text', text: b.text };
+      if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking, signature: b.signature };
       if (b.type === 'tool_use') return { type: 'tool_use', id: b.id, name: b.name, input: b.input || {} };
       return b.raw;
     })
-    .filter((b: any) => (b.type === 'text' ? b.text.trim() !== '' : true));
+    // Drop empty text and unsigned thinking blocks (the API rejects both on the next turn).
+    .filter((b: any) => {
+      if (b.type === 'text') return b.text.trim() !== '';
+      if (b.type === 'thinking') return !!b.signature;
+      return true;
+    });
   const toolUses = content.filter((b) => b.type === 'tool_use');
   return { error: null, content, toolUses, stopReason };
 }
@@ -239,8 +259,12 @@ export function createChatHandler(cfg: ChatConfig) {
 
       const reqPayload: Record<string, unknown> = {
         model: cfg.model || config.anthropicModel,
-        max_tokens: 4000,
+        max_tokens: 8000, // room for thinking + answer + tool_use
         system,
+        // Adaptive thinking: the model decides when/how much to think; streamed to a
+        // collapsible "thoughts" box. Mirrors oliver-och-klara-i-japan (Sonnet 4.6).
+        thinking: { type: 'adaptive' },
+        output_config: { effort: 'medium' },
         ...(cfg.tools && cfg.tools.length ? { tools: cfg.tools } : {}),
       };
 
@@ -250,6 +274,7 @@ export function createChatHandler(cfg: ChatConfig) {
         'X-Accel-Buffering': 'no',
       });
 
+      const toolLog: Array<{ label: string; ok: boolean }> = [];
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
         const result = await streamRound({ ...reqPayload, messages: convo }, res, ac.signal);
         if (clientGone) break;
@@ -271,6 +296,7 @@ export function createChatHandler(cfg: ChatConfig) {
             out = (e as Error).message;
             isError = true;
           }
+          toolLog.push({ label: tu.name, ok: !isError });
           toolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
@@ -281,7 +307,11 @@ export function createChatHandler(cfg: ChatConfig) {
         if (clientGone) break;
         convo.push({ role: 'user', content: toolResults });
       }
-      if (!clientGone) res.end();
+      if (!clientGone) {
+        // Trailer: which tools ran (shown as chips + lets the client persist them).
+        if (toolLog.length) res.write(`${RS}TOOLS:${JSON.stringify(toolLog)}${RS}`);
+        res.end();
+      }
     } catch (e) {
       if (!res.headersSent) sendErr(res, 500, 'Internal error: ' + (e as Error).message);
       else

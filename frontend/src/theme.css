@@ -1,0 +1,30 @@
+/* ─────────────────────────────────────────────────────────────────────────
+   THEME TOKENS — edit THIS file per app so your apps don't all look the same.
+   Only design decisions live here (colors, radius, font, sizes). Structural
+   layout lives in styles.css and references these vars. Swap the palette,
+   radius, and font here and the whole app re-skins.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Surfaces */
+  --bg: #0f1115;
+  --surface: #181b22;
+  --surface-2: #20242d;
+  --border: #2b3039;
+
+  /* Text */
+  --text: #e7e9ee;
+  --muted: #99a0ad;
+
+  /* Brand / accents (used for primary buttons, user bubbles, active tab) */
+  --accent: #6d8bff;
+  --accent-2: #9b6dff;
+  --danger: #ff6d6d;
+
+  /* Shape + type */
+  --radius: 14px;
+  --font: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+
+  /* Layout */
+  --tabbar-h: 60px;
+  --safe-b: env(safe-area-inset-bottom, 0px);
+}
