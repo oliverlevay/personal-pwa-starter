@@ -4,6 +4,9 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend/ ./
+# vite.config imports the shared per-worktree port helper from backend/lib (dev-server
+# only, but evaluated at config load), so it must resolve during the production build too.
+COPY backend/lib/ports.ts /app/backend/lib/ports.ts
 RUN npm run build
 
 FROM node:24-alpine
