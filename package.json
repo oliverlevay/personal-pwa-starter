@@ -1,0 +1,27 @@
+{
+  "name": "personal-pwa-starter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A copy-and-delete template for small personal PWA apps: zero-dep Node backend (SQLite via node:sqlite), React 19 + Vite PWA frontend, Web Push, Claude chat, receipt/email inbox.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev:backend": "node --watch --disable-warning=ExperimentalWarning backend/server.ts",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start": "node --disable-warning=ExperimentalWarning backend/server.ts",
+    "build": "npm --prefix frontend install && npm --prefix frontend run build",
+    "ports": "node --disable-warning=ExperimentalWarning -e \"import('./backend/lib/ports.ts').then(m => console.log(m.derivePorts(process.cwd())))\"",
+    "test:backend": "node --test --disable-warning=ExperimentalWarning backend/test/*.test.ts",
+    "test:frontend": "npm --prefix frontend test",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}
