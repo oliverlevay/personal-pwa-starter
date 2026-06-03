@@ -36,6 +36,22 @@ The response streams answer text directly. Tool-activity status lines are wrappe
 ASCII RS (`0x1e`) delimiters so the client can show a transient indicator without it
 landing in the saved message. Even-index segments (split on `0x1e`) are visible text.
 
+## Conversations (persisted chat history + multi-device sync)
+| Method | Path | Body | Returns |
+|---|---|---|---|
+| GET | `/api/conversations` | — | conversations (newest first) |
+| POST | `/api/conversations` | `{ title? }` | created conversation |
+| GET | `/api/conversations/:id` | — | `{ ...conv, messages: [{id, role, content, meta}] }` |
+| PATCH | `/api/conversations/:id?client=` | `{ title }` | updated conversation (broadcasts `title`) |
+| DELETE | `/api/conversations/:id` | — | `{ ok }` (messages cascade) |
+| POST | `/api/conversations/:id/messages?client=` | `{ message: {id, role, content, meta?} }` | `{ ok, added }` — idempotent by message id; broadcasts `message` |
+| GET | `/api/conversations/:id/events?client=` | — | SSE stream of `{type:'delta'|'message'|'title', …}` |
+
+The `client` query param identifies the device so it isn't echoed its own events. The
+`/api/chat` body accepts `convId`, `clientId`, `replyId` to relay answer deltas to other
+devices viewing the same conversation, and (when `convId` is set) the model may call a
+`set_conversation_title` tool, surfaced as a `TITLE:` trailer in the chat stream.
+
 ## Inbox (receipts / forwarded email)
 | Method | Path | Body | Returns |
 |---|---|---|---|

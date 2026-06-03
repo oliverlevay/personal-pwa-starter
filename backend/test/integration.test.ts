@@ -61,3 +61,35 @@ test('health, me, notes CRUD, push key, inbox token guard', async () => {
     close();
   }
 });
+
+test('conversations: create, idempotent append, fetch with messages, list', async () => {
+  const { base, close } = await boot();
+  try {
+    const conv = (await (
+      await fetch(`${base}/api/conversations`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'T' }),
+      })
+    ).json()) as { id: string };
+    assert.ok(conv.id);
+
+    const append = (mid: string) =>
+      fetch(`${base}/api/conversations/${conv.id}/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ message: { id: mid, role: 'user', content: 'hi' } }),
+      }).then((r) => r.json() as Promise<{ added: boolean }>);
+
+    assert.equal((await append('m1')).added, true);
+    assert.equal((await append('m1')).added, false); // idempotent dedup by id
+
+    const full = (await (await fetch(`${base}/api/conversations/${conv.id}`)).json()) as { messages: unknown[] };
+    assert.equal(full.messages.length, 1);
+
+    const list = (await (await fetch(`${base}/api/conversations`)).json()) as unknown[];
+    assert.equal(list.length, 1);
+  } finally {
+    close();
+  }
+});

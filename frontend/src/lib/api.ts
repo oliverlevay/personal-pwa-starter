@@ -9,6 +9,20 @@ export interface ChatFile {
   dataBase64?: string; // data URL or raw base64
 }
 
+export interface Conversation {
+  id: string;
+  title?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface StoredMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  meta?: Record<string, unknown>;
+}
+
 async function req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch('/api' + path, {
     method,
@@ -47,13 +61,31 @@ export const api = {
   unsubscribePush: (endpoint: string) => req('POST', '/push/unsubscribe', { endpoint }),
   testPush: () => req<{ sent: number }>('POST', '/push/test'),
 
-  // Chat — returns the raw streaming Response so the caller can read text deltas.
-  chatStream: (messages: unknown, file?: ChatFile | null, signal?: AbortSignal) =>
+  // Chat — returns the raw streaming Response so the caller can read text deltas. Pass
+  // convId/clientId/replyId to relay the stream to other devices viewing this conversation.
+  chatStream: (
+    messages: unknown,
+    opts: { file?: ChatFile | null; convId?: string; clientId?: string; replyId?: string; signal?: AbortSignal } = {},
+  ) =>
     fetch('/api/chat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ messages, ...(file ? { file } : {}) }),
+      body: JSON.stringify({
+        messages,
+        ...(opts.file ? { file: opts.file } : {}),
+        ...(opts.convId ? { convId: opts.convId, clientId: opts.clientId, replyId: opts.replyId } : {}),
+      }),
       credentials: 'same-origin',
-      signal,
+      signal: opts.signal,
     }),
+
+  // Conversations (persisted history + multi-device sync)
+  listConversations: () => req<Conversation[]>('GET', '/conversations'),
+  createConversation: (title?: string) => req<Conversation>('POST', '/conversations', { title }),
+  getConversation: (id: string) => req<Conversation & { messages: StoredMessage[] }>('GET', `/conversations/${id}`),
+  appendMessage: (convId: string, message: StoredMessage, clientId: string) =>
+    req('POST', `/conversations/${convId}/messages?client=${encodeURIComponent(clientId)}`, { message }),
+  patchConversation: (id: string, title: string, clientId: string) =>
+    req('PATCH', `/conversations/${id}?client=${encodeURIComponent(clientId)}`, { title }),
+  deleteConversation: (id: string) => req('DELETE', `/conversations/${id}`),
 };

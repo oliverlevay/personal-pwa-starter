@@ -5,6 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Store } from './store.ts';
 import type { Pusher, PushSubscription } from './push.ts';
 import * as auth from './auth.ts';
+import * as pubsub from './pubsub.ts';
 
 export interface AppRoutes {
   store: Store;
@@ -99,6 +100,87 @@ export async function handleApi(
       if (!app.chat) return send(res, 503, { error: 'Chat not configured.' }), true;
       await app.chat(req, res, user);
       return true;
+    }
+
+    // /api/conversations[...] — persisted chat history + multi-device live sync.
+    if (seg[0] === 'conversations') {
+      const store = app.store;
+      const id = seg[1];
+      const sub = seg[2];
+      const clientId = url.searchParams.get('client') || '';
+
+      if (!id) {
+        if (method === 'GET') {
+          return (
+            send(
+              res,
+              200,
+              store.all('SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC'),
+            ),
+            true
+          );
+        }
+        if (method === 'POST') {
+          const body = (await readJson(req)) as { title?: string };
+          return send(res, 201, store.insert('conversations', { title: body.title || null })), true;
+        }
+      } else if (!sub) {
+        if (method === 'GET') {
+          const conv = store.find('conversations', id);
+          if (!conv) return send(res, 404, { error: 'not found' }), true;
+          const rows = store.all<{ meta: string | null }>(
+            'SELECT * FROM chat_messages WHERE conversation_id = ? ORDER BY created_at',
+            [id],
+          );
+          const messages = rows.map((r) => ({ ...r, meta: r.meta ? JSON.parse(r.meta) : undefined }));
+          return send(res, 200, { ...conv, messages }), true;
+        }
+        if (method === 'PATCH' || method === 'PUT') {
+          const body = (await readJson(req)) as { title?: string };
+          const conv = store.update('conversations', id, { title: body.title });
+          if (conv && typeof body.title === 'string') pubsub.publish(id, { type: 'title', title: body.title }, clientId);
+          return send(res, conv ? 200 : 404, conv || { error: 'not found' }), true;
+        }
+        if (method === 'DELETE') return send(res, 200, { ok: store.remove('conversations', id) }), true;
+      } else if (sub === 'messages' && method === 'POST') {
+        // Idempotent append (dedup by message id) so concurrent devices can't clobber.
+        const body = (await readJson(req)) as { message?: { id?: string; role?: string; content?: string; meta?: unknown } };
+        const m = body.message;
+        if (!m || !m.id || !m.role) return send(res, 400, { error: 'message {id, role} required' }), true;
+        if (!store.find('conversations', id)) return send(res, 404, { error: 'no conversation' }), true;
+        const r = store.run(
+          'INSERT OR IGNORE INTO chat_messages (id, conversation_id, role, content, meta, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+          [m.id, id, m.role, m.content || '', m.meta ? JSON.stringify(m.meta) : null, new Date().toISOString()],
+        );
+        const added = r.changes > 0;
+        if (added) {
+          store.run('UPDATE conversations SET updated_at = ? WHERE id = ?', [new Date().toISOString(), id]);
+          pubsub.publish(id, { type: 'message', message: m }, clientId);
+        }
+        return send(res, 200, { ok: true, added }), true;
+      } else if (sub === 'events' && method === 'GET') {
+        // SSE: keep the connection open and stream events until the client disconnects.
+        res.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        });
+        res.write('retry: 3000\n\n');
+        const unsub = pubsub.subscribe(id, res, clientId);
+        const hb = setInterval(() => {
+          try {
+            res.write(': hb\n\n');
+          } catch {
+            /* closed */
+          }
+        }, 25_000);
+        req.on('close', () => {
+          clearInterval(hb);
+          unsub();
+        });
+        return true;
+      }
     }
 
     // Generic CRUD: /api/:type[/:id], restricted to the resource allowlist.

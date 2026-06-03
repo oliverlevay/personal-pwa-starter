@@ -5,6 +5,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { Buffer } from 'node:buffer';
 import { config } from './config.ts';
+import * as pubsub from './pubsub.ts';
 
 const API_URL = 'https://api.anthropic.com/v1/messages';
 const MAX_HISTORY = 20;
@@ -90,7 +91,9 @@ function fileBlocks(file: ChatFile): ContentBlock[] {
   return [{ type: 'text', text: `Contents of attached file "${name}":\n\n${text}` }];
 }
 
-function readJson(req: IncomingMessage): Promise<{ messages?: unknown; file?: ChatFile }> {
+function readJson(
+  req: IncomingMessage,
+): Promise<{ messages?: unknown; file?: ChatFile; convId?: string; clientId?: string; replyId?: string }> {
   return new Promise((resolve, reject) => {
     let body = '';
     req.on('data', (c) => {
@@ -132,6 +135,7 @@ async function streamRound(
   payload: Record<string, unknown>,
   res: ServerResponse,
   signal: AbortSignal,
+  relay?: (text: string) => void, // broadcast each answer delta to other devices viewing this convo
 ): Promise<RoundResult> {
   const empty: RoundResult = { error: null, content: [], toolUses: [], stopReason: null };
   let upstream: Response;
@@ -182,6 +186,7 @@ async function streamRound(
       if (ev.delta.type === 'text_delta') {
         b.text += ev.delta.text;
         res.write(ev.delta.text);
+        if (relay) relay(ev.delta.text);
       } else if (ev.delta.type === 'thinking_delta') {
         b.thinking += ev.delta.thinking;
         writeThink(res, ev.delta.thinking);
@@ -304,10 +309,26 @@ export function createChatHandler(cfg: ChatConfig) {
         }
       });
 
+      // Multi-device relay: broadcast each answer delta to other clients viewing this convo.
+      const relay =
+        body.convId && body.replyId
+          ? (text: string) => pubsub.publish(body.convId!, { type: 'delta', id: body.replyId, text }, body.clientId)
+          : undefined;
+
       const tools = [
         ...(cfg.tools || []),
         // Anthropic's hosted web search (runs server-side; results stream back as citations).
         ...(cfg.webSearch ? [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }] : []),
+        // In a saved conversation, let the model name it once (handled by the scaffold below).
+        ...(body.convId
+          ? [
+              {
+                name: 'set_conversation_title',
+                description: 'Set a short 3–5 word title for this conversation. Call once, right after your first reply.',
+                input_schema: { type: 'object', properties: { title: { type: 'string' } }, required: ['title'] },
+              },
+            ]
+          : []),
       ];
       const reqPayload: Record<string, unknown> = {
         model: cfg.model || config.anthropicModel,
@@ -327,8 +348,9 @@ export function createChatHandler(cfg: ChatConfig) {
       });
 
       const toolLog: Array<{ label: string; ok: boolean }> = [];
+      let capturedTitle = '';
       for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-        const result = await streamRound({ ...reqPayload, messages: convo }, res, ac.signal);
+        const result = await streamRound({ ...reqPayload, messages: convo }, res, ac.signal, relay);
         if (clientGone) break;
         if (result.error) {
           res.write('\n\n⚠️ ' + result.error);
@@ -337,16 +359,26 @@ export function createChatHandler(cfg: ChatConfig) {
         convo.push({ role: 'assistant', content: result.content });
         if (result.stopReason === 'pause_turn') continue; // server tool (web_search) paused; resume
         if (result.stopReason !== 'tool_use' || !result.toolUses.length) break;
-        if (!cfg.runTool) break;
 
         const toolResults: ContentBlock[] = [];
         for (const tu of result.toolUses as Array<{ id: string; name: string; input: Record<string, unknown> }>) {
+          // set_conversation_title is scaffold-handled — capture it + emit a TITLE trailer.
+          if (tu.name === 'set_conversation_title') {
+            capturedTitle = String((tu.input as { title?: string })?.title || '').slice(0, 80);
+            toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: 'Title set.' });
+            continue;
+          }
           let out: unknown;
           let isError = false;
-          try {
-            out = await cfg.runTool(tu.name, tu.input || {});
-          } catch (e) {
-            out = (e as Error).message;
+          if (cfg.runTool) {
+            try {
+              out = await cfg.runTool(tu.name, tu.input || {});
+            } catch (e) {
+              out = (e as Error).message;
+              isError = true;
+            }
+          } else {
+            out = `No handler for tool ${tu.name}`;
             isError = true;
           }
           toolLog.push({ label: tu.name, ok: !isError });
@@ -361,7 +393,8 @@ export function createChatHandler(cfg: ChatConfig) {
         convo.push({ role: 'user', content: toolResults });
       }
       if (!clientGone) {
-        // Trailer: which tools ran (shown as chips + lets the client persist them).
+        // Trailers: the auto-title (client persists it) and which tools ran (chips).
+        if (capturedTitle) res.write(`${RS}TITLE:${JSON.stringify(capturedTitle)}${RS}`);
         if (toolLog.length) res.write(`${RS}TOOLS:${JSON.stringify(toolLog)}${RS}`);
         res.end();
       }

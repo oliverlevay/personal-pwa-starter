@@ -47,3 +47,17 @@ test('chat streams a reply bubble', async ({ page }) => {
   await expect(page.locator('.bubble-user', { hasText: 'hello' })).toBeVisible();
   await expect(page.locator('.bubble-assistant')).toBeVisible({ timeout: 15_000 });
 });
+
+test('conversations persist across reload (history)', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Chat' }).click();
+  await page.getByPlaceholder('Type a message').fill('remember me');
+  await page.getByRole('button', { name: 'Send' }).click();
+  await expect(page.locator('.bubble-user', { hasText: 'remember me' })).toBeVisible();
+
+  // Reload: the conversation (with the user message) should be retrievable from history.
+  await page.reload();
+  await page.getByRole('button', { name: 'Chat' }).click();
+  await page.getByRole('button', { name: 'History' }).click();
+  await expect(page.locator('.conv-open').first()).toBeVisible({ timeout: 5_000 });
+});

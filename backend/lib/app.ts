@@ -23,6 +23,26 @@ export function createApp(dataDir: string): BuiltApp {
   store.migrate([
     PUSH_MIGRATION,
     {
+      // Scaffold-owned chat persistence: conversations + their messages (for history,
+      // resume, and multi-device sync). meta holds JSON (thoughts/tools/attachment).
+      id: 'scaffold_0002_conversations',
+      sql: `CREATE TABLE conversations (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        created_at TEXT,
+        updated_at TEXT
+      );
+      CREATE TABLE chat_messages (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        role TEXT NOT NULL,
+        content TEXT,
+        meta TEXT,
+        created_at TEXT
+      );
+      CREATE INDEX idx_chat_messages_conv ON chat_messages(conversation_id, created_at);`,
+    },
+    {
       id: 'app_0001_notes',
       sql: `CREATE TABLE notes (
         id TEXT PRIMARY KEY,
